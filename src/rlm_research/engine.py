@@ -177,7 +177,23 @@ async def run_rlm(
         return sub_lm
 
     def _make_llm_batch():
+        max_batch = config.engine.max_sub_lm_calls
+
         def llm_batch(prompts: list[str]) -> list[str]:
+            nonlocal sub_lm_count
+
+            # Depth check — same as sub_lm
+            if depth >= config.engine.max_recursion_depth:
+                msg = f"(max recursion depth {config.engine.max_recursion_depth} reached)"
+                return [msg] * len(prompts)
+
+            # Enforce batch size and remaining budget
+            remaining = max_batch - sub_lm_count
+            if remaining <= 0:
+                return [f"(max sub_lm calls {max_batch} reached)"] * len(prompts)
+            batch = prompts[:remaining]
+            sub_lm_count += len(batch)
+
             async def _run_all():
                 tasks = [
                     run_rlm(
@@ -185,14 +201,31 @@ async def run_rlm(
                         search_provider=search_provider, depth=depth + 1,
                         on_progress=on_progress,
                     )
-                    for p in prompts
+                    for p in batch
                 ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                return [
-                    r.content if isinstance(r, EngineResult) else f"(error: {r})"
-                    for r in results
-                ]
-            return _run_async(_run_all())
+                return await asyncio.gather(*tasks, return_exceptions=True)
+
+            raw = _run_async(_run_all())
+
+            # Record in call_tree and build output
+            output = []
+            for p, r in zip(batch, raw):
+                if isinstance(r, EngineResult):
+                    call_tree.append({
+                        "depth": depth + 1,
+                        "prompt": p[:200],
+                        "result": r.content[:200],
+                        "batch": True,
+                    })
+                    output.append(r.content)
+                else:
+                    output.append(f"(error: {r})")
+
+            # Pad truncated prompts with limit message
+            for _ in range(len(prompts) - len(batch)):
+                output.append(f"(max sub_lm calls {max_batch} reached)")
+
+            return output
         return llm_batch
 
     # --- Wire up search functions ---
