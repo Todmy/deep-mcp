@@ -51,8 +51,6 @@ async def load_sources(sources: list[str]) -> dict[str, Any]:
     loaded = await asyncio.gather(*tasks, return_exceptions=True)
 
     result: dict[str, Any] = {}
-    source_meta: dict[str, str] = {}  # doc_N → original source URI
-
     for i, item in enumerate(loaded):
         if isinstance(item, Exception):
             log.error("Failed to load source %s: %s", sources[i], item)
@@ -67,12 +65,8 @@ async def load_sources(sources: list[str]) -> dict[str, Any]:
             result[f"doc_{i}_tree"] = value["_tree"]
             result[f"doc_{i}_files"] = value["_files"]
             result[f"doc_{i}_stats"] = value["_stats"]
-            source_meta[f"doc_{i}"] = sources[i]
         else:
             result[f"doc_{i}"] = value
-            source_meta[f"doc_{i}"] = sources[i]
-
-    result["_source_meta"] = source_meta
     return result
 
 
