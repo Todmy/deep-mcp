@@ -17,7 +17,7 @@ from rlm_research.engine import ProgressEvent, run_rlm
 from rlm_research.llm import LLMClient
 from rlm_research.loaders import load_sources
 from rlm_research.report import generate_report
-from rlm_research.search import create_search_provider
+from rlm_research.search import close_search_provider, create_search_provider
 
 app = typer.Typer(
     name="rlm-research",
@@ -127,15 +127,18 @@ async def _run_research(query: str, sources: list[str], cfg) -> None:
             spinner_text += f" ({elapsed:.0f}s)"
 
     # Run engine with live progress
-    with Live(Spinner("dots", text=spinner_text), console=console, refresh_per_second=4):
-        result = await run_rlm(
-            query=query,
-            sources=loaded,
-            config=cfg,
-            llm=llm,
-            search_provider=search_provider,
-            on_progress=on_progress,
-        )
+    try:
+        with Live(Spinner("dots", text=spinner_text), console=console, refresh_per_second=4):
+            result = await run_rlm(
+                query=query,
+                sources=loaded,
+                config=cfg,
+                llm=llm,
+                search_provider=search_provider,
+                on_progress=on_progress,
+            )
+    finally:
+        await close_search_provider(search_provider)
 
     # Generate and print report
     report = generate_report(

@@ -6,7 +6,6 @@ import ast
 import io
 import logging
 import signal
-import sys
 import traceback
 from typing import Any, Callable
 
@@ -122,7 +121,14 @@ class REPL:
         return self.namespace.get(key, default)
 
     def sources_summary(self) -> str:
-        """Generate summary of available data for Root LM prompt."""
+        """Generate summary of available data for Root LM prompt.
+
+        Includes source URL and first 2K chars preview for string sources,
+        so the model can read data without writing code first.
+        """
+        source_meta = self.namespace.get("_source_meta", {})
+        preview_limit = 2000
+
         lines = ["Available data:"]
         for key, value in self.namespace.items():
             if key.startswith("_") or key in (
@@ -133,33 +139,48 @@ class REPL:
                 "string", "datetime",
             ):
                 continue
+
+            # Source URL metadata
+            url_hint = ""
+            if key in source_meta:
+                url_hint = f" [source: {source_meta[key]}]"
+
             if isinstance(value, str):
-                lines.append(f"- {key}: string ({len(value)} chars)")
+                lines.append(f"- {key}: string ({len(value)} chars){url_hint}")
+                # Include preview so model can read without code
+                preview = value[:preview_limit]
+                if len(value) > preview_limit:
+                    preview += f"\n... ({len(value) - preview_limit} more chars in {key})"
+                lines.append(f"  Content preview:\n{preview}")
             elif isinstance(value, dict):
-                lines.append(f"- {key}: dict ({len(value)} keys)")
+                lines.append(f"- {key}: dict ({len(value)} keys){url_hint}")
             elif isinstance(value, list):
-                lines.append(f"- {key}: list ({len(value)} items)")
+                lines.append(f"- {key}: list ({len(value)} items){url_hint}")
             else:
-                lines.append(f"- {key}: {type(value).__name__}")
+                lines.append(f"- {key}: {type(value).__name__}{url_hint}")
 
         if "web_search" in self.namespace:
-            lines.append("- web_search(query, n=5): web search enabled")
+            lines.append("\nTools: web_search(query, n=5): web search enabled")
         if "sub_lm" in self.namespace:
-            lines.append("- sub_lm(prompt): recursive LLM call")
+            lines.append("Tools: sub_lm(prompt): recursive LLM call (~30s per call)")
         if "llm_batch" in self.namespace:
-            lines.append("- llm_batch([prompts]): parallel sub_lm calls")
+            lines.append("Tools: llm_batch([prompts]): parallel sub_lm calls")
         return "\n".join(lines)
 
-    def execute(self, code: str, timeout: int = 300) -> str:
-        """Execute code in restricted namespace. Returns stdout+stderr or error.
+    def execute(self, code: str, timeout: int = 300) -> str:  # noqa: S102
+        """Execute code in restricted namespace. Returns captured output or error.
 
-        NOTE: This uses exec() intentionally — the REPL is the core of RLM's
-        code-execute-observe loop. Security is enforced via:
+        NOTE: This uses Python's exec() builtin intentionally — the REPL is
+        the core of RLM's code-execute-observe loop. Security is enforced via:
         1. AST validation (_validate_code) blocks dangerous imports
         2. Restricted builtins (no open, no eval/exec in namespace)
         3. Safe __import__ only allows whitelisted modules
         4. SIGALRM timeout (main thread) or caller-managed timeout (worker thread)
         This is MVP-level sandboxing. Production requires Docker isolation.
+
+        Output capture uses a per-execution print() override in the namespace
+        instead of global sys.stdout redirection, making it thread-safe for
+        parallel llm_batch executions.
         """
         import threading
 
@@ -168,18 +189,21 @@ class REPL:
         if error:
             return f"VALIDATION ERROR: {error}"
 
-        # Capture stdout/stderr
-        old_stdout, old_stderr = sys.stdout, sys.stderr
-        captured_out = io.StringIO()
-        captured_err = io.StringIO()
+        # Per-execution output buffer — no global sys.stdout mutation
+        captured = io.StringIO()
+        real_print = print  # save reference to builtin
+
+        def _captured_print(*args, **kwargs):
+            kwargs.setdefault("file", captured)
+            real_print(*args, **kwargs)
+
+        # Inject captured print into namespace for this execution
+        self.namespace["print"] = _captured_print
 
         is_main = threading.current_thread() is threading.main_thread()
 
         result_parts = []
         try:
-            sys.stdout = captured_out
-            sys.stderr = captured_err
-
             if is_main:
                 # SIGALRM timeout (only works in main thread)
                 def _timeout_handler(_signum, _frame):
@@ -188,6 +212,7 @@ class REPL:
                 old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
                 signal.alarm(timeout)
                 try:
+                    # Python exec() builtin — executes LLM-generated code in sandbox
                     exec(code, self.namespace)  # noqa: S102
                 finally:
                     signal.alarm(0)
@@ -196,19 +221,18 @@ class REPL:
                 # Worker thread — no SIGALRM, timeout managed by caller
                 exec(code, self.namespace)  # noqa: S102
 
-            stdout_val = captured_out.getvalue()
-            stderr_val = captured_err.getvalue()
-            if stdout_val:
-                result_parts.append(stdout_val)
-            if stderr_val:
-                result_parts.append(f"STDERR: {stderr_val}")
+            output_val = captured.getvalue()
+            if output_val:
+                result_parts.append(output_val)
 
         except TimeoutError as e:
             result_parts.append(f"TIMEOUT: {e}")
         except Exception:
             result_parts.append(f"ERROR:\n{traceback.format_exc()}")
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
 
-        return "\n".join(result_parts) if result_parts else "(no output)"
+        output = "\n".join(result_parts) if result_parts else "(no output)"
+        # Cap output to prevent context explosion in conversation history
+        max_output = 5000
+        if len(output) > max_output:
+            output = output[:max_output] + f"\n... (truncated, {len(output) - max_output} chars omitted)"
+        return output

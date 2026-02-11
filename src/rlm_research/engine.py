@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -17,19 +18,9 @@ from rlm_research.search import SearchProvider, fetch_url
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """\
-You are an RLM (Recursive Language Model) research agent. You analyze data by writing Python code.
-
-## How you work
-- Data is pre-loaded as Python variables in your environment (see "Available data" below)
-- Write Python code blocks to inspect, search, slice, and transform the data
-- Use `sub_lm(prompt)` to delegate sub-questions to a fresh LLM instance
-- Use `llm_batch([prompts])` for parallel sub-queries
-- Use `web_search(query, n=5)` if web search is available
-- Use `print()` to output intermediate results you want to observe
-
+_PROMPT_SHARED = """\
 ## Available functions
-- `sub_lm(prompt: str) -> str` — recursive LLM call (fresh instance with its own loop)
+- `sub_lm(prompt: str) -> str` — recursive LLM call with its own code-execute-observe loop
 - `llm_batch(prompts: list[str]) -> list[str]` — parallel sub_lm calls
 - `web_search(query: str, n: int = 5) -> list[dict]` — web search (if enabled)
 - `fetch_url(url: str) -> str` — fetch and extract text from URL
@@ -40,8 +31,7 @@ You are an RLM (Recursive Language Model) research agent. You analyze data by wr
 2. After each execution, you'll see the output — then write the next code block
 3. Set `answer["content"] = "your findings"` with your analysis
 4. Set `answer["ready"] = True` when you're done
-5. Be systematic: explore data structure first, then analyze
-6. Cite sources in your findings: [source: variable_name] or [source: url]
+5. Cite sources in your findings: [source: variable_name] or [source: url]
 
 ## Important
 - Variables persist between code blocks (same REPL session)
@@ -52,13 +42,55 @@ You are an RLM (Recursive Language Model) research agent. You analyze data by wr
 - NEVER put markdown backtick fences (```) inside Python strings
 """
 
+ROOT_SYSTEM_PROMPT = """\
+You are the Root LM — the orchestrator of an RLM (Recursive Language Model) research system.
+
+## Your role
+You DECOMPOSE complex questions, DELEGATE focused sub-tasks to sub_lm(), and SYNTHESIZE results.
+You do NOT process large data yourself — you inspect previews, plan your approach, then delegate.
+
+## How you work
+1. READ the content previews below — understand the structure and scope of available data
+2. PLAN your decomposition strategy: what sub-questions will answer the main query?
+3. DELEGATE via `sub_lm(prompt)` — each call gets a fresh analyst with its own code-execute-observe loop
+4. Use `llm_batch([prompts])` for independent sub-questions (runs in parallel, much faster)
+5. SYNTHESIZE sub_lm results into a comprehensive answer
+
+## Critical: store findings in REPL variables
+Keep your reasoning organized by storing intermediate results in variables:
+```python
+findings = {}
+findings["section_1"] = sub_lm(f"Analyze section 1: {doc_0[:500]}")
+findings["section_2"] = sub_lm(f"Analyze section 2: {doc_0[500:1000]}")
+# Then synthesize from findings dict — not from conversation history
+```
+This keeps data in variable space (persistent, unlimited) rather than token space (limited).
+
+""" + _PROMPT_SHARED
+
+SUB_SYSTEM_PROMPT = """\
+You are a focused research analyst in an RLM (Recursive Language Model) system.
+
+## Your role
+You received a SPECIFIC question or analysis task. Answer it thoroughly using the available data.
+
+## How you work
+- Data is pre-loaded as Python variables (see "Available data" below with content previews)
+- READ the content previews first — they often contain enough info to answer directly
+- Use Python code blocks to search deeper in documents, compute, or transform data
+- Be thorough but focused — answer the specific question you were given
+- Prefer direct analysis over spawning further sub_lm calls (each costs ~30s)
+- When you have enough information, set your answer and finish promptly
+
+""" + _PROMPT_SHARED
+
 # Regex patterns for code block extraction
 _FENCE_OPEN = re.compile(r"```python\s*\n")
 _FENCE_CLOSE = re.compile(r"```")
 
 # Stuck detection: if answer hasn't changed in this many turns, inject hint
-STUCK_THRESHOLD = 5
-STUCK_FORCE_STOP = 8
+STUCK_THRESHOLD = 3
+STUCK_FORCE_STOP = 5
 
 
 @dataclass
@@ -123,6 +155,11 @@ def extract_code_blocks(response: str) -> list[str]:
     return blocks
 
 
+# Max concurrent sub_lm calls to prevent API rate limiting (429s).
+# Shared across all recursive depths within a single research session.
+MAX_CONCURRENT_SUB_LM = 5
+
+
 async def run_rlm(
     query: str,
     sources: dict[str, Any],
@@ -131,6 +168,8 @@ async def run_rlm(
     search_provider: SearchProvider | None = None,
     depth: int = 0,
     on_progress: Callable[[ProgressEvent], None] | None = None,
+    _concurrency: asyncio.Semaphore | None = None,
+    _sub_lm_cache: dict[str, str] | None = None,
 ) -> EngineResult:
     """Run the RLM code-execute-observe loop.
 
@@ -140,6 +179,12 @@ async def run_rlm(
     start_time = time.time()
     call_tree: list[dict[str, Any]] = []
     sub_lm_count = 0
+
+    # Create semaphore and cache at root level, share across all recursive calls
+    if _concurrency is None:
+        _concurrency = asyncio.Semaphore(MAX_CONCURRENT_SUB_LM)
+    if _sub_lm_cache is None:
+        _sub_lm_cache = {}
 
     # --- Async-to-sync bridge ---
     # REPL runs code synchronously (via Python exec) but sub_lm/search are async.
@@ -151,6 +196,19 @@ async def run_rlm(
         future = asyncio.run_coroutine_threadsafe(coro, _loop)
         return future.result()
 
+    # --- Rate-limited recursive call ---
+    async def _rate_limited_run_rlm(prompt: str) -> EngineResult:
+        async with _concurrency:
+            return await run_rlm(
+                query=prompt, sources=sources, config=config, llm=llm,
+                search_provider=search_provider, depth=depth + 1,
+                on_progress=on_progress, _concurrency=_concurrency,
+                _sub_lm_cache=_sub_lm_cache,
+            )
+
+    def _cache_key(prompt: str) -> str:
+        return hashlib.md5(f"{depth+1}:{prompt}".encode()).hexdigest()
+
     # --- Wire up sub_lm as a recursive call back into run_rlm ---
     def _make_sub_lm():
         def sub_lm(prompt: str) -> str:
@@ -160,19 +218,22 @@ async def run_rlm(
             if sub_lm_count >= config.engine.max_sub_lm_calls:
                 return f"(max sub_lm calls {config.engine.max_sub_lm_calls} reached)"
 
+            # Check cache for identical prompts
+            key = _cache_key(prompt)
+            if key in _sub_lm_cache:
+                log.debug("sub_lm cache hit at depth %d", depth + 1)
+                return _sub_lm_cache[key]
+
             sub_lm_count += 1
             sub_start = time.time()
-            result = _run_async(run_rlm(
-                query=prompt, sources=sources, config=config, llm=llm,
-                search_provider=search_provider, depth=depth + 1,
-                on_progress=on_progress,
-            ))
+            result = _run_async(_rate_limited_run_rlm(prompt))
             call_tree.append({
                 "depth": depth + 1,
                 "prompt": prompt[:200],
                 "result": result.content[:200],
                 "duration": time.time() - sub_start,
             })
+            _sub_lm_cache[key] = result.content
             return result.content
         return sub_lm
 
@@ -195,14 +256,7 @@ async def run_rlm(
             sub_lm_count += len(batch)
 
             async def _run_all():
-                tasks = [
-                    run_rlm(
-                        query=p, sources=sources, config=config, llm=llm,
-                        search_provider=search_provider, depth=depth + 1,
-                        on_progress=on_progress,
-                    )
-                    for p in batch
-                ]
+                tasks = [_rate_limited_run_rlm(p) for p in batch]
                 return await asyncio.gather(*tasks, return_exceptions=True)
 
             raw = _run_async(_run_all())
@@ -254,8 +308,9 @@ async def run_rlm(
 
     # --- Build initial messages ---
     sources_summary = repl.sources_summary()
+    system_prompt = ROOT_SYSTEM_PROMPT if depth == 0 else SUB_SYSTEM_PROMPT
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Query: {query}\n\n{sources_summary}"},
     ]
 
@@ -345,9 +400,38 @@ async def run_rlm(
                 },
             ))
 
+    # --- Synthesis turn if budget exhausted without answer ---
+    answer = repl.get("answer", {})
+    if not answer.get("ready"):
+        log.info("Budget exhausted at depth %d, attempting synthesis turn", depth)
+        messages.append({"role": "user", "content": (
+            "Your turn budget is exhausted. Synthesize ALL findings you have gathered "
+            "so far into a comprehensive final answer. Use the variables you've stored "
+            "(check `findings` if you used it, or review your earlier results). "
+            "Set answer['content'] with your complete synthesis and answer['ready'] = True."
+        )})
+        try:
+            response = await llm.generate(messages, depth=depth)
+            code_blocks = extract_code_blocks(response.content)
+            for code in code_blocks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(repl.execute, code, config.engine.timeout_per_exec),
+                        timeout=config.engine.timeout_per_exec + 5,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                if repl.get("answer", {}).get("ready"):
+                    break
+        except Exception as exc:
+            log.warning("Synthesis turn failed: %s", exc)
+
     # --- Collect result ---
     answer = repl.get("answer", {})
-    content = answer.get("content", "Analysis incomplete — budget exhausted.")
+    content = answer.get("content", "")
+
+    if not content:
+        content = "Analysis incomplete — budget exhausted."
     elapsed = time.time() - start_time
 
     return EngineResult(

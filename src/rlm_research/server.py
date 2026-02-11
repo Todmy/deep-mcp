@@ -11,7 +11,7 @@ from rlm_research.engine import run_rlm
 from rlm_research.llm import LLMClient
 from rlm_research.loaders import load_sources
 from rlm_research.report import generate_report
-from rlm_research.search import create_search_provider
+from rlm_research.search import close_search_provider, create_search_provider
 
 log = logging.getLogger(__name__)
 
@@ -60,13 +60,16 @@ async def deep_research(
         search_provider = create_search_provider(cfg.search)
 
     # Run RLM engine
-    result = await run_rlm(
-        query=query,
-        sources=loaded,
-        config=cfg,
-        llm=llm,
-        search_provider=search_provider,
-    )
+    try:
+        result = await run_rlm(
+            query=query,
+            sources=loaded,
+            config=cfg,
+            llm=llm,
+            search_provider=search_provider,
+        )
+    finally:
+        await close_search_provider(search_provider)
 
     # Generate report
     report = generate_report(
