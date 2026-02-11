@@ -356,7 +356,7 @@ async def run_rlm(
 
     # --- Collect result ---
     answer = repl.get("answer", {})
-    content = answer.get("content", "Analysis incomplete — budget exhausted.")
+    content = answer.get("content") or "Analysis incomplete — budget exhausted."
     elapsed = time.time() - start_time
 
     return EngineResult(
