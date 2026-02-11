@@ -67,6 +67,36 @@ def _validate_code(code: str) -> str | None:
     return None
 
 
+def _split_last_expr(code: str) -> tuple[str, str]:
+    """Split code into (exec_part, eval_part) like IPython.
+
+    If the last statement is a bare expression (ast.Expr), compile it
+    separately so we can eval() it and show the result. Otherwise,
+    return (code, "") so everything runs via exec().
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code, ""
+
+    if not tree.body:
+        return code, ""
+
+    last = tree.body[-1]
+    if not isinstance(last, ast.Expr):
+        return code, ""
+
+    # Compile everything except the last expression
+    if len(tree.body) == 1:
+        exec_part = ""
+    else:
+        lines = code.splitlines(keepends=True)
+        exec_part = "".join(lines[:last.lineno - 1])
+
+    eval_part = ast.get_source_segment(code, last.value) or ""
+    return exec_part, eval_part
+
+
 class REPL:
     """Restricted Python execution environment for RLM code-execute-observe loop.
 
@@ -180,6 +210,17 @@ class REPL:
             sys.stdout = captured_out
             sys.stderr = captured_err
 
+            # Split code: exec all statements, eval last expression (like IPython)
+            exec_code, eval_code = _split_last_expr(code)
+
+            def _run():
+                if exec_code:
+                    exec(exec_code, self.namespace)  # noqa: S102
+                if eval_code:
+                    result = eval(eval_code, self.namespace)  # noqa: S307
+                    if result is not None:
+                        print(repr(result))
+
             if is_main:
                 # SIGALRM timeout (only works in main thread)
                 def _timeout_handler(_signum, _frame):
@@ -188,13 +229,13 @@ class REPL:
                 old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
                 signal.alarm(timeout)
                 try:
-                    exec(code, self.namespace)  # noqa: S102
+                    _run()
                 finally:
                     signal.alarm(0)
                     signal.signal(signal.SIGALRM, old_handler)
             else:
                 # Worker thread — no SIGALRM, timeout managed by caller
-                exec(code, self.namespace)  # noqa: S102
+                _run()
 
             stdout_val = captured_out.getvalue()
             stderr_val = captured_err.getvalue()
