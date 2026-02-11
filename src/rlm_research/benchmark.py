@@ -106,9 +106,12 @@ def _compute_aggregate(results: list[dict]) -> dict:
 async def _prepare_sources(item: dict, mode: str) -> list[str]:
     """Build source URIs for a single benchmark question.
 
+    Closed mode: no sources, model uses only its own knowledge.
     Oracle mode: use wiki_links as HTTPS sources.
     Retrieval mode: use web:// to enable live search.
     """
+    if mode == "closed":
+        return []
     if mode == "retrieval":
         return ["web://"]
 

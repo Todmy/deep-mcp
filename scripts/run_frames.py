@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
         help="Max questions to evaluate (default: 20)",
     )
     p.add_argument(
-        "-m", "--mode", choices=["oracle", "retrieval"], default="oracle",
+        "-m", "--mode", choices=["oracle", "retrieval", "closed"], default="oracle",
         help="Source mode (default: oracle)",
     )
     p.add_argument(
