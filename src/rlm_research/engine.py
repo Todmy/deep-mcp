@@ -51,7 +51,7 @@ You are an RLM (Recursive Language Model) research agent. You analyze data by wr
 """
 
 
-def _build_system_prompt(has_search: bool, depth: int) -> str:
+def _build_system_prompt(has_search: bool) -> str:
     """Build system prompt — same for root and sub per RLM paper design."""
     if has_search:
         search_line = '- Use `web_search(query, n=5)` if web search is available\n'
@@ -295,7 +295,7 @@ async def run_rlm(
     # --- Build initial messages ---
     sources_summary = repl.sources_summary()
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": _build_system_prompt(has_search=search_provider is not None, depth=depth)},
+        {"role": "system", "content": _build_system_prompt(has_search=search_provider is not None)},
         {"role": "user", "content": f"Query: {query}\n\n{sources_summary}"},
     ]
 
