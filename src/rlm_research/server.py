@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 from rlm_research.config import load_config
 from rlm_research.engine import run_rlm
@@ -15,7 +15,7 @@ from rlm_research.search import create_search_provider
 
 log = logging.getLogger(__name__)
 
-mcp = MCPServer(
+mcp = FastMCP(
     name="rlm-research",
     instructions=(
         "Deep research over documents, code, and web using RLM recursive decomposition. "
