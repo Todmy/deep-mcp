@@ -6,12 +6,16 @@
 .env.local
 .env.*.local
 
-# Dependencies
-node_modules/
-
-# Build
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
 dist/
 build/
+.venv/
+venv/
 
 # IDE
 .idea/
