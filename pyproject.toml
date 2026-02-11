@@ -31,6 +31,7 @@ dev = [
 
 [project.scripts]
 rlm-research = "rlm_research.cli:app"
+rlm-research-mcp = "rlm_research.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rlm_research"]

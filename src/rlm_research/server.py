@@ -7,7 +7,7 @@ import logging
 from mcp.server.mcpserver import MCPServer
 
 from rlm_research.config import load_config
-from rlm_research.engine import ProgressEvent, run_rlm
+from rlm_research.engine import run_rlm
 from rlm_research.llm import LLMClient
 from rlm_research.loaders import load_sources
 from rlm_research.report import generate_report
