@@ -178,7 +178,7 @@ def setup(
 
     # Engine
     console.print(f"\n  Max depth: {cfg.engine.max_recursion_depth}")
-    console.print(f"  Max turns: {cfg.engine.max_turns}")
+    console.print(f"  Max turns: {cfg.engine.max_turns or 'unlimited'}")
     console.print(f"  Timeout:   {cfg.engine.timeout_per_exec}s")
     console.print()
 

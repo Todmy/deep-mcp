@@ -111,8 +111,8 @@ async def rlm_setup() -> str:
         "",
         "## Engine Settings",
         f"- Max recursion depth: {cfg.engine.max_recursion_depth}",
-        f"- Max turns: {cfg.engine.max_turns}",
-        f"- Max sub-LM calls: {cfg.engine.max_sub_lm_calls}",
+        f"- Max turns: {cfg.engine.max_turns or 'unlimited'}",
+        f"- Max sub-LM calls: {cfg.engine.max_sub_lm_calls or 'unlimited'}",
         f"- Timeout per execution: {cfg.engine.timeout_per_exec}s",
     ])
 

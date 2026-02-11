@@ -60,8 +60,8 @@ class SearchConfig:
 @dataclass
 class EngineConfig:
     max_recursion_depth: int = 3
-    max_turns: int = 30
-    max_sub_lm_calls: int = 50
+    max_turns: int = 0          # 0 = unlimited
+    max_sub_lm_calls: int = 0   # 0 = unlimited
     timeout_per_exec: int = 300
 
 

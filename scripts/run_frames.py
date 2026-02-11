@@ -63,6 +63,14 @@ def parse_args() -> argparse.Namespace:
         help="Max recursion depth for sub_lm calls (default: 2)",
     )
     p.add_argument(
+        "--max-turns", type=int, default=None,
+        help="Max turns per question (default: unlimited)",
+    )
+    p.add_argument(
+        "--max-sub-lm", type=int, default=None,
+        help="Max sub_lm calls per question (default: unlimited)",
+    )
+    p.add_argument(
         "--temperature", type=float, default=None,
         help="LLM temperature (default: provider default; use 0 for deterministic runs)",
     )
@@ -116,6 +124,10 @@ async def main() -> None:
         overrides.setdefault("search", {})["provider"] = args.search
     if args.max_depth is not None:
         overrides.setdefault("engine", {})["max_recursion_depth"] = args.max_depth
+    if args.max_turns is not None:
+        overrides.setdefault("engine", {})["max_turns"] = args.max_turns
+    if args.max_sub_lm is not None:
+        overrides.setdefault("engine", {})["max_sub_lm_calls"] = args.max_sub_lm
     if args.temperature is not None:
         overrides.setdefault("llm", {})["temperature"] = args.temperature
 
@@ -128,12 +140,17 @@ async def main() -> None:
         )
         sys.exit(1)
 
+    turns_str = str(cfg.engine.max_turns) if cfg.engine.max_turns else "unlimited"
+    sub_lm_str = str(cfg.engine.max_sub_lm_calls) if cfg.engine.max_sub_lm_calls else "unlimited"
     console.print(
         f"\n[bold]FRAMES Benchmark[/bold] — {args.mode} mode, "
         f"limit={args.limit}"
     )
     console.print(
-        f"  Root: {cfg.llm.root_model}  Sub: {cfg.llm.sub_model}\n"
+        f"  Root: {cfg.llm.root_model}  Sub: {cfg.llm.sub_model}"
+    )
+    console.print(
+        f"  Turns: {turns_str}  Sub-LM calls: {sub_lm_str}  Depth: {cfg.engine.max_recursion_depth}\n"
     )
 
     # Progress callback

@@ -6,6 +6,7 @@ import ast
 import asyncio
 import logging
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -163,6 +164,10 @@ async def run_rlm(
     call_tree: list[dict[str, Any]] = []
     sub_lm_count = 0
 
+    # Budget limits — 0 means unlimited
+    max_turns = config.engine.max_turns or sys.maxsize
+    max_sub_lm = config.engine.max_sub_lm_calls or 0  # 0 = no limit
+
     # --- Async-to-sync bridge ---
     # REPL runs code synchronously (via Python exec) but sub_lm/search are async.
     # We use run_coroutine_threadsafe to schedule async work on the running loop.
@@ -181,8 +186,8 @@ async def run_rlm(
                 msg = f"(max recursion depth {config.engine.max_recursion_depth} reached)"
                 print(f"sub_lm: {msg}")
                 return msg
-            if sub_lm_count >= config.engine.max_sub_lm_calls:
-                msg = f"(max sub_lm calls {config.engine.max_sub_lm_calls} reached)"
+            if max_sub_lm and sub_lm_count >= max_sub_lm:
+                msg = f"(max sub_lm calls {max_sub_lm} reached)"
                 print(f"sub_lm: {msg}")
                 return msg
 
@@ -205,8 +210,6 @@ async def run_rlm(
         return sub_lm
 
     def _make_llm_batch():
-        max_batch = config.engine.max_sub_lm_calls
-
         def llm_batch(prompts: list[str]) -> list[str]:
             nonlocal sub_lm_count
 
@@ -217,12 +220,15 @@ async def run_rlm(
                 return [msg] * len(prompts)
 
             # Enforce batch size and remaining budget
-            remaining = max_batch - sub_lm_count
-            if remaining <= 0:
-                msg = f"(max sub_lm calls {max_batch} reached)"
-                print(f"llm_batch: {msg}")
-                return [msg] * len(prompts)
-            batch = prompts[:remaining]
+            if max_sub_lm:
+                remaining = max_sub_lm - sub_lm_count
+                if remaining <= 0:
+                    msg = f"(max sub_lm calls {max_sub_lm} reached)"
+                    print(f"llm_batch: {msg}")
+                    return [msg] * len(prompts)
+                batch = prompts[:remaining]
+            else:
+                batch = prompts
             sub_lm_count += len(batch)
 
             async def _run_all():
@@ -254,7 +260,7 @@ async def run_rlm(
 
             # Pad truncated prompts with limit message
             for _ in range(len(prompts) - len(batch)):
-                output.append(f"(max sub_lm calls {max_batch} reached)")
+                output.append(f"(max sub_lm calls {max_sub_lm} reached)")
 
             # Auto-print so model sees results even when assigned to a variable
             for i, o in enumerate(output):
@@ -306,7 +312,7 @@ async def run_rlm(
             depth=depth, turn=0,
         ))
 
-    for turn in range(config.engine.max_turns):
+    for turn in range(max_turns):
         # 1. LLM generates response
         response = await llm.generate(messages, depth=depth)
         code_blocks = extract_code_blocks(response.content)
@@ -376,7 +382,7 @@ async def run_rlm(
         if on_progress and turn % 3 == 0:
             on_progress(ProgressEvent(
                 stage="analyzing",
-                message=f"Turn {turn + 1}/{config.engine.max_turns} (depth {depth})",
+                message=f"Turn {turn + 1} (depth {depth})",
                 depth=depth, turn=turn + 1,
                 stats={
                     "llm_calls_total": llm.cumulative_usage.total,
