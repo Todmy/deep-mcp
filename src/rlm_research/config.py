@@ -41,7 +41,7 @@ class LLMConfig:
     sub_model: str = "openai/gpt-4o-mini"
     api_key: str = ""
     base_url: str = ""
-    temperature: float = 0.0
+    temperature: float | None = None
 
     def effective_base_url(self) -> str:
         if self.base_url:

@@ -60,11 +60,13 @@ class LLMClient:
 
         for attempt in range(MAX_RETRIES):
             try:
-                response = await self._client.chat.completions.create(
-                    model=target_model,
-                    messages=messages,
-                    temperature=self._config.llm.temperature,
-                )
+                kwargs: dict = {
+                    "model": target_model,
+                    "messages": messages,
+                }
+                if self._config.llm.temperature is not None:
+                    kwargs["temperature"] = self._config.llm.temperature
+                response = await self._client.chat.completions.create(**kwargs)
                 choice = response.choices[0]
                 usage = TokenUsage()
                 if response.usage:
