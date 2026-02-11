@@ -115,9 +115,10 @@ async def _prepare_sources(item: dict, mode: str) -> list[str]:
     # Oracle mode: load from wiki_links
     wiki_links = item.get("wiki_links", [])
     if isinstance(wiki_links, str):
-        # Sometimes stored as stringified list
+        # Dataset stores as stringified Python list: "['url1', 'url2']"
+        # Replace single quotes with double quotes for JSON parsing
         try:
-            wiki_links = json.loads(wiki_links)
+            wiki_links = json.loads(wiki_links.replace("'", '"'))
         except (json.JSONDecodeError, TypeError):
             wiki_links = [wiki_links] if wiki_links else []
 
@@ -192,7 +193,7 @@ async def run_frames_benchmark(
                 on_progress(idx + 1, total, existing[question])
             continue
         gold = item.get("Answer", "")
-        reasoning_type = item.get("Reasoning_Type", "unknown")
+        reasoning_type = item.get("reasoning_types", "unknown")
 
         log.info("[%d/%d] %s", idx + 1, total, question[:80])
 
