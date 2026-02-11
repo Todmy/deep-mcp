@@ -76,9 +76,16 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
 
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if args.verbose:
+        fh = logging.FileHandler("debug.log", mode="w")
+        fh.setLevel(logging.DEBUG)
+        handlers.append(fh)
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=log_level,
         format="%(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
     )
 
     # Check datasets dependency
