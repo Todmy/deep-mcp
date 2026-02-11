@@ -28,8 +28,8 @@ PROVIDERS = {
     },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
-        "root_models": ["deepseek/deepseek-r1-0528:free"],
-        "sub_models": ["openai/gpt-oss-120b:free"],
+        "root_models": ["google/gemini-2.5-flash", "deepseek/deepseek-r1-0528:free"],
+        "sub_models": ["openai/gpt-4o-mini", "openai/gpt-oss-120b:free"],
     },
 }
 
@@ -37,8 +37,8 @@ PROVIDERS = {
 @dataclass
 class LLMConfig:
     provider: str = "openrouter"
-    root_model: str = "deepseek/deepseek-r1-0528:free"
-    sub_model: str = "openai/gpt-oss-120b:free"
+    root_model: str = "google/gemini-2.5-flash"
+    sub_model: str = "openai/gpt-4o-mini"
     api_key: str = ""
     base_url: str = ""
 

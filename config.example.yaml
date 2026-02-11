@@ -1,7 +1,7 @@
 llm:
   provider: "openrouter"                          # openai | deepseek | glm | openrouter | local
-  root_model: "deepseek/deepseek-r1-0528:free"   # reasoning model for root LM (depth 0)
-  sub_model: "openai/gpt-oss-120b:free"           # cheaper model for sub-LM calls (depth 1+)
+  root_model: "google/gemini-2.5-flash"           # reasoning model for root LM (depth 0)
+  sub_model: "openai/gpt-4o-mini"                 # cheaper model for sub-LM calls (depth 1+)
   api_key: "${OPENROUTER_API_KEY}"                # or set RLM_API_KEY env var
   # base_url: "https://openrouter.ai/api/v1"     # override for custom endpoints
 
