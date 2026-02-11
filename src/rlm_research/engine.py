@@ -77,23 +77,17 @@ class EngineResult:
     call_tree: list[dict[str, Any]]
 
 
-def extract_code_block(response: str) -> str | None:
-    """Extract Python code block from LLM response.
-
-    LLMs often embed markdown backtick fences inside generated Python code
-    (e.g., in string literals passed to sub_lm). A naive non-greedy regex
-    stops at the first ```, truncating the code. Instead, we find all possible
-    closing fences and try from the last one backwards, validating with AST.
-    """
-    start = _FENCE_OPEN.search(response)
+def _extract_one_block(text: str) -> tuple[str | None, int]:
+    """Extract one Python code block from text. Returns (code, end_position)."""
+    start = _FENCE_OPEN.search(text)
     if not start:
-        return None
+        return None, len(text)
 
-    remaining = response[start.end():]
+    remaining = text[start.end():]
     fence_positions = [m.start() for m in _FENCE_CLOSE.finditer(remaining)]
 
     if not fence_positions:
-        return None
+        return None, len(text)
 
     # Try from last fence to first — first valid parse wins
     for pos in reversed(fence_positions):
@@ -102,12 +96,31 @@ def extract_code_block(response: str) -> str | None:
             continue
         try:
             ast.parse(candidate)
-            return candidate
+            return candidate, start.end() + pos + 3
         except SyntaxError:
             continue
 
     # Nothing parsed — return shortest candidate so REPL reports the actual error
-    return remaining[:fence_positions[0]].strip() or None
+    return remaining[:fence_positions[0]].strip() or None, len(text)
+
+
+def extract_code_blocks(response: str) -> list[str]:
+    """Extract ALL Python code blocks from LLM response.
+
+    LLMs often generate multiple code blocks in one response. Executing all of
+    them in one turn saves full LLM round-trips (30-120s each).
+
+    Handles markdown backtick fences embedded inside code by validating with AST.
+    """
+    blocks = []
+    pos = 0
+    while pos < len(response):
+        code, end = _extract_one_block(response[pos:])
+        if code is None:
+            break
+        blocks.append(code)
+        pos += end
+    return blocks
 
 
 async def run_rlm(
@@ -227,28 +240,41 @@ async def run_rlm(
     for turn in range(config.engine.max_turns):
         # 1. LLM generates response
         response = await llm.generate(messages, depth=depth)
-        code = extract_code_block(response.content)
+        code_blocks = extract_code_blocks(response.content)
 
-        if not code:
+        if not code_blocks:
             # LLM didn't produce code — might be reasoning or final answer
-            # Check if it set answer in a previous turn
             if repl.get("answer", {}).get("ready"):
                 break
-            # Append response and ask for code
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": "Please write a Python code block to continue your analysis."})
             continue
 
-        # 2. Execute code in REPL
-        exec_result = repl.execute(code, timeout=config.engine.timeout_per_exec)
+        # 2. Execute ALL code blocks (saves LLM round-trips)
+        # Run in thread pool so event loop stays free for sub_lm/search coroutines
+        all_results = []
+        done = False
+        for code in code_blocks:
+            try:
+                exec_result = await asyncio.wait_for(
+                    asyncio.to_thread(repl.execute, code, config.engine.timeout_per_exec),
+                    timeout=config.engine.timeout_per_exec + 5,  # grace period
+                )
+            except asyncio.TimeoutError:
+                exec_result = f"TIMEOUT: Execution timed out after {config.engine.timeout_per_exec}s"
+            all_results.append(exec_result)
+            if repl.get("answer", {}).get("ready"):
+                done = True
+                break
+
+        combined_output = "\n---\n".join(all_results) if len(all_results) > 1 else all_results[0]
 
         # 3. Append to conversation
         messages.append({"role": "assistant", "content": response.content})
-        messages.append({"role": "user", "content": f"Execution result:\n{exec_result}"})
+        messages.append({"role": "user", "content": f"Execution result:\n{combined_output}"})
 
         # 4. Check completion
-        answer = repl.get("answer", {})
-        if answer.get("ready"):
+        if done:
             if on_progress:
                 on_progress(ProgressEvent(
                     stage="done", message="Analysis complete",
@@ -257,7 +283,7 @@ async def run_rlm(
             break
 
         # 5. Stuck detection
-        current_content = answer.get("content")
+        current_content = repl.get("answer", {}).get("content")
         if current_content == last_answer_content:
             stuck_count += 1
         else:

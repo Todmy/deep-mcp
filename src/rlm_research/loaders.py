@@ -39,25 +39,29 @@ async def load_source(source: str) -> tuple[str, Any]:
 
 
 async def load_sources(sources: list[str]) -> dict[str, Any]:
-    """Load all sources, returning a dict ready for REPL namespace injection."""
+    """Load all sources in parallel, returning a dict for REPL namespace injection."""
+    import asyncio
+
+    tasks = [load_source(source) for source in sources]
+    loaded = await asyncio.gather(*tasks, return_exceptions=True)
+
     result: dict[str, Any] = {}
-    for i, source in enumerate(sources):
-        try:
-            name, value = await load_source(source)
-            if name == "_web_enabled":
-                result[name] = value
-                continue
-            # Prefix with doc_N for positional naming
-            key = f"doc_{i}" if isinstance(value, str) else f"doc_{i}"
-            if isinstance(value, dict) and "_files" in value:
-                result[f"doc_{i}_tree"] = value["_tree"]
-                result[f"doc_{i}_files"] = value["_files"]
-                result[f"doc_{i}_stats"] = value["_stats"]
-            else:
-                result[key] = value
-        except Exception as e:
-            log.error("Failed to load source %s: %s", source, e)
-            result[f"doc_{i}_error"] = f"Failed to load: {e}"
+    for i, item in enumerate(loaded):
+        if isinstance(item, Exception):
+            log.error("Failed to load source %s: %s", sources[i], item)
+            result[f"doc_{i}_error"] = f"Failed to load: {item}"
+            continue
+
+        name, value = item
+        if name == "_web_enabled":
+            result[name] = value
+            continue
+        if isinstance(value, dict) and "_files" in value:
+            result[f"doc_{i}_tree"] = value["_tree"]
+            result[f"doc_{i}_files"] = value["_files"]
+            result[f"doc_{i}_stats"] = value["_stats"]
+        else:
+            result[f"doc_{i}"] = value
     return result
 
 

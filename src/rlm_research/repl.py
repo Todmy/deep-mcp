@@ -150,16 +150,19 @@ class REPL:
             lines.append("- llm_batch([prompts]): parallel sub_lm calls")
         return "\n".join(lines)
 
-    def execute(self, code: str, timeout: int = 30) -> str:
+    def execute(self, code: str, timeout: int = 300) -> str:
         """Execute code in restricted namespace. Returns stdout+stderr or error.
 
         NOTE: This uses exec() intentionally — the REPL is the core of RLM's
         code-execute-observe loop. Security is enforced via:
         1. AST validation (_validate_code) blocks dangerous imports
-        2. Restricted builtins (no open, no __import__, no eval/exec in namespace)
-        3. SIGALRM timeout prevents infinite loops
+        2. Restricted builtins (no open, no eval/exec in namespace)
+        3. Safe __import__ only allows whitelisted modules
+        4. SIGALRM timeout (main thread) or caller-managed timeout (worker thread)
         This is MVP-level sandboxing. Production requires Docker isolation.
         """
+        import threading
+
         # Static validation
         error = _validate_code(code)
         if error:
@@ -170,24 +173,28 @@ class REPL:
         captured_out = io.StringIO()
         captured_err = io.StringIO()
 
-        def _timeout_handler(signum, frame):
-            raise TimeoutError(f"Execution timed out after {timeout}s")
+        is_main = threading.current_thread() is threading.main_thread()
 
         result_parts = []
         try:
             sys.stdout = captured_out
             sys.stderr = captured_err
 
-            # Set timeout (Unix only)
-            old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-            signal.alarm(timeout)
+            if is_main:
+                # SIGALRM timeout (only works in main thread)
+                def _timeout_handler(_signum, _frame):
+                    raise TimeoutError(f"Execution timed out after {timeout}s")
 
-            try:
-                # Intentional use of exec — see docstring for security model
+                old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(timeout)
+                try:
+                    exec(code, self.namespace)  # noqa: S102
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+            else:
+                # Worker thread — no SIGALRM, timeout managed by caller
                 exec(code, self.namespace)  # noqa: S102
-            finally:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
 
             stdout_val = captured_out.getvalue()
             stderr_val = captured_err.getvalue()
