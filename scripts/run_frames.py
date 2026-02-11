@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Ensure src/ is importable when running from repo root
@@ -79,7 +80,8 @@ async def main() -> None:
     log_level = logging.DEBUG if args.verbose else logging.INFO
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if args.verbose:
-        fh = logging.FileHandler("debug.log", mode="w")
+        log_file = f"debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        fh = logging.FileHandler(log_file, mode="w")
         fh.setLevel(logging.DEBUG)
         handlers.append(fh)
     logging.basicConfig(
