@@ -17,7 +17,7 @@ from rlm_research.search import SearchProvider, fetch_url
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT_BASE = """\
 You are an RLM (Recursive Language Model) research agent. You analyze data by writing Python code.
 
 ## How you work
@@ -25,15 +25,12 @@ You are an RLM (Recursive Language Model) research agent. You analyze data by wr
 - Write Python code blocks to inspect, search, slice, and transform the data
 - Use `sub_lm(prompt)` to delegate sub-questions to a fresh LLM instance
 - Use `llm_batch([prompts])` for parallel sub-queries
-- Use `web_search(query, n=5)` if web search is available
-- Use `print()` to output intermediate results you want to observe
+{search_line}- Use `print()` to output intermediate results you want to observe
 
 ## Available functions
 - `sub_lm(prompt: str) -> str` — recursive LLM call (fresh instance with its own loop)
 - `llm_batch(prompts: list[str]) -> list[str]` — parallel sub_lm calls
-- `web_search(query: str, n: int = 5) -> list[dict]` — web search (if enabled)
-- `fetch_url(url: str) -> str` — fetch and extract text from URL
-- Standard Python: re, json, math, collections, itertools, etc.
+{functions_extra}- Standard Python: re, json, math, collections, itertools, etc.
 
 ## Rules
 1. Write ONE Python code block per message (```python ... ```)
@@ -48,9 +45,25 @@ You are an RLM (Recursive Language Model) research agent. You analyze data by wr
 - Modules re, json, math, collections, itertools, functools, textwrap, difflib, statistics, string, datetime are pre-loaded — use them directly without importing
 - Keep code blocks focused — one logical step per block
 - NEVER embed raw document content into strings — reference variables directly
-- Pass data to sub_lm via f-strings: `sub_lm(f"Analyze: {doc_0[:500]}")`
+- Pass data to sub_lm via f-strings: `sub_lm(f"Analyze: {{doc_0[:500]}}")`
 - NEVER put markdown backtick fences (```) inside Python strings
 """
+
+
+def _build_system_prompt(has_search: bool) -> str:
+    """Build system prompt, only mentioning web_search/fetch_url if available."""
+    if has_search:
+        search_line = '- Use `web_search(query, n=5)` if web search is available\n'
+        functions_extra = (
+            '- `web_search(query: str, n: int = 5) -> list[dict]` — web search\n'
+            '- `fetch_url(url: str) -> str` — fetch and extract text from URL\n'
+        )
+    else:
+        search_line = ''
+        functions_extra = ''
+    return _SYSTEM_PROMPT_BASE.format(
+        search_line=search_line, functions_extra=functions_extra,
+    )
 
 # Regex patterns for code block extraction
 _FENCE_OPEN = re.compile(r"```python\s*\n")
@@ -264,12 +277,13 @@ async def run_rlm(
     # --- Build initial messages ---
     sources_summary = repl.sources_summary()
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": _build_system_prompt(has_search=search_provider is not None)},
         {"role": "user", "content": f"Query: {query}\n\n{sources_summary}"},
     ]
 
     # --- Main loop: code → execute → observe ---
-    last_answer_content = None
+    _SENTINEL = object()  # distinguishes "no answer yet" from answer=None
+    last_answer_content = _SENTINEL
     stuck_count = 0
     turn = 0
 
@@ -324,9 +338,13 @@ async def run_rlm(
                 ))
             break
 
-        # 5. Stuck detection
+        # 5. Stuck detection — only when model HAS set an answer
         current_content = repl.get("answer", {}).get("content")
-        if current_content == last_answer_content:
+        if last_answer_content is _SENTINEL:
+            # Model hasn't set answer yet — not stuck, just still working
+            if current_content is not None:
+                last_answer_content = current_content
+        elif current_content == last_answer_content:
             stuck_count += 1
         else:
             stuck_count = 0
