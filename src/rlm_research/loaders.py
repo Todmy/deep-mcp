@@ -150,7 +150,8 @@ def _load_docx(path: Path) -> str:
 
 async def _load_url_source(url: str) -> tuple[str, str]:
     """Fetch URL and extract text content."""
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    headers = {"User-Agent": "rlm-research/0.1 (research bot; +https://github.com)"}
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         html = resp.text
