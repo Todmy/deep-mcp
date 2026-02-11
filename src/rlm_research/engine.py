@@ -70,9 +70,6 @@ def _build_system_prompt(has_search: bool) -> str:
 _FENCE_OPEN = re.compile(r"```python\s*\n")
 _FENCE_CLOSE = re.compile(r"```")
 
-# Stuck detection: if answer hasn't changed in this many turns, inject hint
-STUCK_THRESHOLD = 3
-STUCK_FORCE_STOP = 5
 
 
 @dataclass
@@ -301,9 +298,6 @@ async def run_rlm(
     ]
 
     # --- Main loop: code → execute → observe ---
-    _SENTINEL = object()  # distinguishes "no answer yet" from answer=None
-    last_answer_content = _SENTINEL
-    stuck_count = 0
     turn = 0
 
     if on_progress:
@@ -357,28 +351,7 @@ async def run_rlm(
                 ))
             break
 
-        # 5. Stuck detection — only when model HAS set an answer
-        current_content = repl.get("answer", {}).get("content")
-        if last_answer_content is _SENTINEL:
-            # Model hasn't set answer yet — not stuck, just still working
-            if current_content is not None:
-                last_answer_content = current_content
-        elif current_content == last_answer_content:
-            stuck_count += 1
-        else:
-            stuck_count = 0
-            last_answer_content = current_content
-
-        if stuck_count >= STUCK_FORCE_STOP:
-            log.warning("Force stopping at depth %d — stuck for %d turns", depth, stuck_count)
-            break
-        elif stuck_count >= STUCK_THRESHOLD:
-            messages.append({"role": "user", "content": (
-                "Hint: You seem stuck. Try a different approach, or if you have enough "
-                "information, set answer['content'] and answer['ready'] = True."
-            )})
-
-        # 6. Progress
+        # 5. Progress
         if on_progress and turn % 3 == 0:
             on_progress(ProgressEvent(
                 stage="analyzing",
