@@ -178,9 +178,13 @@ async def run_rlm(
         def sub_lm(prompt: str) -> str:
             nonlocal sub_lm_count
             if depth >= config.engine.max_recursion_depth:
-                return f"(max recursion depth {config.engine.max_recursion_depth} reached)"
+                msg = f"(max recursion depth {config.engine.max_recursion_depth} reached)"
+                print(f"sub_lm: {msg}")
+                return msg
             if sub_lm_count >= config.engine.max_sub_lm_calls:
-                return f"(max sub_lm calls {config.engine.max_sub_lm_calls} reached)"
+                msg = f"(max sub_lm calls {config.engine.max_sub_lm_calls} reached)"
+                print(f"sub_lm: {msg}")
+                return msg
 
             sub_lm_count += 1
             sub_start = time.time()
@@ -195,6 +199,8 @@ async def run_rlm(
                 "result": result.content[:200],
                 "duration": time.time() - sub_start,
             })
+            # Auto-print so model sees result even when assigned to a variable
+            print(f"sub_lm result: {result.content[:500]}")
             return result.content
         return sub_lm
 
@@ -207,12 +213,15 @@ async def run_rlm(
             # Depth check — same as sub_lm
             if depth >= config.engine.max_recursion_depth:
                 msg = f"(max recursion depth {config.engine.max_recursion_depth} reached)"
+                print(f"llm_batch: {msg}")
                 return [msg] * len(prompts)
 
             # Enforce batch size and remaining budget
             remaining = max_batch - sub_lm_count
             if remaining <= 0:
-                return [f"(max sub_lm calls {max_batch} reached)"] * len(prompts)
+                msg = f"(max sub_lm calls {max_batch} reached)"
+                print(f"llm_batch: {msg}")
+                return [msg] * len(prompts)
             batch = prompts[:remaining]
             sub_lm_count += len(batch)
 
@@ -246,6 +255,10 @@ async def run_rlm(
             # Pad truncated prompts with limit message
             for _ in range(len(prompts) - len(batch)):
                 output.append(f"(max sub_lm calls {max_batch} reached)")
+
+            # Auto-print so model sees results even when assigned to a variable
+            for i, o in enumerate(output):
+                print(f"llm_batch[{i}]: {o[:300]}")
 
             return output
         return llm_batch
