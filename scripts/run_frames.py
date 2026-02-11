@@ -58,6 +58,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sub-model", help="Sub model override")
     p.add_argument("--search", help="Search provider (for retrieval mode)")
     p.add_argument(
+        "--max-depth", type=int, default=2,
+        help="Max recursion depth for sub_lm calls (default: 2)",
+    )
+    p.add_argument(
         "-c", "--config", type=Path, default=None,
         help="Config file path",
     )
@@ -95,6 +99,8 @@ async def main() -> None:
             overrides["llm"]["sub_model"] = args.sub_model
     if args.search:
         overrides.setdefault("search", {})["provider"] = args.search
+    if args.max_depth is not None:
+        overrides.setdefault("engine", {})["max_recursion_depth"] = args.max_depth
 
     cfg = load_config(config_path=args.config, overrides=overrides or None)
 

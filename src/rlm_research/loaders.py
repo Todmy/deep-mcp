@@ -13,6 +13,11 @@ log = logging.getLogger(__name__)
 # Max file size to load fully into memory (10MB)
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
+# Max text to keep per URL source (20K chars ≈ 5K tokens).
+# Wikipedia and similar sites front-load key facts, so truncating
+# keeps the most useful content while preventing context explosion.
+MAX_URL_TEXT = 20_000
+
 
 async def load_source(source: str) -> tuple[str, Any]:
     """Load a single source into a (var_name, value) pair for REPL namespace.
@@ -161,7 +166,7 @@ async def _load_url_source(url: str) -> tuple[str, str]:
         import trafilatura
         extracted = trafilatura.extract(html)
         if extracted:
-            return ("url", extracted)
+            return ("url", extracted[:MAX_URL_TEXT])
     except ImportError:
         pass
 
@@ -169,7 +174,7 @@ async def _load_url_source(url: str) -> tuple[str, str]:
     import re
     text = re.sub(r"<[^>]+>", " ", html)
     text = re.sub(r"\s+", " ", text).strip()
-    return ("url", text[:MAX_FILE_SIZE])
+    return ("url", text[:MAX_URL_TEXT])
 
 
 def generate_sources_summary(loaded: dict[str, Any]) -> str:
