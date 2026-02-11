@@ -78,7 +78,7 @@ class LLMClient:
 
             except Exception as exc:
                 status = getattr(exc, "status_code", None)
-                retryable = status in (429, 500, 502, 503, 504)
+                retryable = status in (429, 404, 500, 502, 503, 504)
                 if retryable and attempt < MAX_RETRIES - 1:
                     delay = RETRY_BASE_DELAY * (2**attempt)
                     log.warning("HTTP %s, retrying in %.1fs (attempt %d)", status, delay, attempt + 1)
