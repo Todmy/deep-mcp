@@ -77,7 +77,6 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
 
-    log_level = logging.DEBUG if args.verbose else logging.INFO
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if args.verbose:
         log_file = f"debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -85,10 +84,13 @@ async def main() -> None:
         fh.setLevel(logging.DEBUG)
         handlers.append(fh)
     logging.basicConfig(
-        level=log_level,
+        level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
         handlers=handlers,
     )
+    # Console stays at INFO even in verbose mode — debug only goes to file
+    if args.verbose:
+        handlers[0].setLevel(logging.INFO)
 
     # Check datasets dependency
     try:
