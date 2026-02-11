@@ -14,4 +14,4 @@ engine:
   max_recursion_depth: 3          # 1-10
   max_turns: 30                   # max code-execute-observe iterations
   max_sub_lm_calls: 50            # total sub_lm budget
-  timeout_per_exec: 30            # seconds per code block execution
+  timeout_per_exec: 300           # seconds per code block execution (high for sub_lm calls)

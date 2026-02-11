@@ -77,10 +77,11 @@ class LLMClient:
                 return LLMResponse(content=choice.message.content or "", usage=usage)
 
             except Exception as exc:
-                is_rate_limit = getattr(exc, "status_code", None) == 429
-                if is_rate_limit and attempt < MAX_RETRIES - 1:
+                status = getattr(exc, "status_code", None)
+                retryable = status in (429, 404, 500, 502, 503, 504)
+                if retryable and attempt < MAX_RETRIES - 1:
                     delay = RETRY_BASE_DELAY * (2**attempt)
-                    log.warning("Rate limited, retrying in %.1fs (attempt %d)", delay, attempt + 1)
+                    log.warning("HTTP %s, retrying in %.1fs (attempt %d)", status, delay, attempt + 1)
                     await asyncio.sleep(delay)
                     continue
                 raise

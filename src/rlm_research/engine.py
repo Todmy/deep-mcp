@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import logging
 import re
@@ -46,10 +47,14 @@ You are an RLM (Recursive Language Model) research agent. You analyze data by wr
 - Variables persist between code blocks (same REPL session)
 - Don't try to import modules not in your namespace
 - Keep code blocks focused — one logical step per block
+- NEVER embed raw document content into strings — reference variables directly
+- Pass data to sub_lm via f-strings: `sub_lm(f"Analyze: {doc_0[:500]}")`
+- NEVER put markdown backtick fences (```) inside Python strings
 """
 
-# Regex to extract Python code blocks from LLM response
-CODE_BLOCK_RE = re.compile(r"```python\s*\n(.*?)```", re.DOTALL)
+# Regex patterns for code block extraction
+_FENCE_OPEN = re.compile(r"```python\s*\n")
+_FENCE_CLOSE = re.compile(r"```")
 
 # Stuck detection: if answer hasn't changed in this many turns, inject hint
 STUCK_THRESHOLD = 5
@@ -73,9 +78,36 @@ class EngineResult:
 
 
 def extract_code_block(response: str) -> str | None:
-    """Extract first Python code block from LLM response."""
-    match = CODE_BLOCK_RE.search(response)
-    return match.group(1).strip() if match else None
+    """Extract Python code block from LLM response.
+
+    LLMs often embed markdown backtick fences inside generated Python code
+    (e.g., in string literals passed to sub_lm). A naive non-greedy regex
+    stops at the first ```, truncating the code. Instead, we find all possible
+    closing fences and try from the last one backwards, validating with AST.
+    """
+    start = _FENCE_OPEN.search(response)
+    if not start:
+        return None
+
+    remaining = response[start.end():]
+    fence_positions = [m.start() for m in _FENCE_CLOSE.finditer(remaining)]
+
+    if not fence_positions:
+        return None
+
+    # Try from last fence to first — first valid parse wins
+    for pos in reversed(fence_positions):
+        candidate = remaining[:pos].strip()
+        if not candidate:
+            continue
+        try:
+            ast.parse(candidate)
+            return candidate
+        except SyntaxError:
+            continue
+
+    # Nothing parsed — return shortest candidate so REPL reports the actual error
+    return remaining[:fence_positions[0]].strip() or None
 
 
 async def run_rlm(

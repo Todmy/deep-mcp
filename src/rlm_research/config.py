@@ -61,7 +61,7 @@ class EngineConfig:
     max_recursion_depth: int = 3
     max_turns: int = 30
     max_sub_lm_calls: int = 50
-    timeout_per_exec: int = 30
+    timeout_per_exec: int = 300
 
 
 @dataclass
