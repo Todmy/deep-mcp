@@ -87,6 +87,15 @@ def _extract_one_block(text: str) -> tuple[str | None, int]:
     fence_positions = [m.start() for m in _FENCE_CLOSE.finditer(remaining)]
 
     if not fence_positions:
+        # No closing fence — treat rest of text as code
+        # (common with gpt-4o-mini via OpenRouter)
+        candidate = remaining.strip()
+        if candidate:
+            try:
+                ast.parse(candidate)
+                return candidate, len(text)
+            except SyntaxError:
+                pass
         return None, len(text)
 
     # Try from last fence to first — first valid parse wins
