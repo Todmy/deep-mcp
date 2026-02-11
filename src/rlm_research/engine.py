@@ -57,8 +57,8 @@ _FENCE_OPEN = re.compile(r"```python\s*\n")
 _FENCE_CLOSE = re.compile(r"```")
 
 # Stuck detection: if answer hasn't changed in this many turns, inject hint
-STUCK_THRESHOLD = 5
-STUCK_FORCE_STOP = 8
+STUCK_THRESHOLD = 3
+STUCK_FORCE_STOP = 5
 
 
 @dataclass
