@@ -63,6 +63,7 @@ class LLMClient:
                 response = await self._client.chat.completions.create(
                     model=target_model,
                     messages=messages,
+                    temperature=self._config.llm.temperature,
                 )
                 choice = response.choices[0]
                 usage = TokenUsage()
