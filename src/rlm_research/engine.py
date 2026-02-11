@@ -385,6 +385,32 @@ async def run_rlm(
                 },
             ))
 
+    # --- Synthesis turn if budget exhausted without answer ---
+    answer = repl.get("answer", {})
+    if not answer.get("ready"):
+        log.info("Budget exhausted at depth %d, attempting synthesis turn", depth)
+        messages.append({"role": "user", "content": (
+            "Your turn budget is exhausted. Synthesize ALL findings you have gathered "
+            "so far into a comprehensive final answer. Use the variables you've stored "
+            "(check `findings` if you used it, or review your earlier results). "
+            "Set answer['content'] with your complete synthesis and answer['ready'] = True."
+        )})
+        try:
+            response = await llm.generate(messages, depth=depth)
+            code_blocks = extract_code_blocks(response.content)
+            for code in code_blocks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(repl.execute, code, config.engine.timeout_per_exec),
+                        timeout=config.engine.timeout_per_exec + 5,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                if repl.get("answer", {}).get("ready"):
+                    break
+        except Exception as exc:
+            log.warning("Synthesis turn failed: %s", exc)
+
     # --- Collect result ---
     answer = repl.get("answer", {})
     content = answer.get("content") or "Analysis incomplete — budget exhausted."
