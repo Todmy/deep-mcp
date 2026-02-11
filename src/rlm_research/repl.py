@@ -20,15 +20,29 @@ ALLOWED_MODULES = {
 
 # Builtins blocked for security — no file writes, no system access
 BLOCKED_BUILTINS = {
-    "exec", "eval", "compile", "__import__", "open",
+    "exec", "eval", "compile", "open",
     "breakpoint", "exit", "quit", "input",
 }
 
 
+def _make_safe_import(allowed: set[str]):
+    """Create a __import__ that only allows whitelisted modules."""
+    real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
+
+    def safe_import(name, *args, **kwargs):
+        root = name.split(".")[0]
+        if root not in allowed:
+            raise ImportError(f"Import blocked: '{root}' is not in allowed modules")
+        return real_import(name, *args, **kwargs)
+
+    return safe_import
+
+
 def _make_safe_builtins() -> dict[str, Any]:
-    """Create a builtins dict with dangerous functions removed."""
+    """Create a builtins dict with dangerous functions removed and safe __import__."""
     import builtins
     safe = {k: v for k, v in vars(builtins).items() if k not in BLOCKED_BUILTINS}
+    safe["__import__"] = _make_safe_import(ALLOWED_MODULES)
     return safe
 
 
