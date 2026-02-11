@@ -28,17 +28,17 @@ PROVIDERS = {
     },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
-        "root_models": [],
-        "sub_models": [],
+        "root_models": ["deepseek/deepseek-r1-0528:free"],
+        "sub_models": ["openai/gpt-oss-120b:free"],
     },
 }
 
 
 @dataclass
 class LLMConfig:
-    provider: str = "openai"
-    root_model: str = "o3-mini"
-    sub_model: str = "gpt-4o-mini"
+    provider: str = "openrouter"
+    root_model: str = "deepseek/deepseek-r1-0528:free"
+    sub_model: str = "openai/gpt-oss-120b:free"
     api_key: str = ""
     base_url: str = ""
 
@@ -100,6 +100,14 @@ def _apply_env_overrides(config: Config) -> None:
         "RLM_MAX_DEPTH": ("engine", "max_recursion_depth"),
         "RLM_MAX_TURNS": ("engine", "max_turns"),
     }
+    # Also check provider-specific key vars as fallback for api_key
+    if not os.environ.get("RLM_API_KEY"):
+        for key_var in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"):
+            val = os.environ.get(key_var)
+            if val:
+                env_map[key_var] = ("llm", "api_key")
+                break
+
     for env_name, (section, attr) in env_map.items():
         value = os.environ.get(env_name)
         if value is not None:
